@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>War–Peace Index · Danial Sanahurskyj</title>
+<meta name="description" content="A daily GDELT-based measure of Russia–Ukraine escalation and de-escalation news, 2018 to present, updated nightly.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<style>
+
+
+*{box-sizing:border-box}
+
+.wrap{font-size:17px;line-height:1.6}
+.col{max-width:68ch}
+.top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  border-bottom:1px solid var(--rule);padding-bottom:12px}
+.top b{color:var(--fg);font-weight:500}
+h1{font-family:var(--display);font-stretch:78%;font-weight:800;font-size:clamp(44px,8vw,84px);line-height:.95;
+  letter-spacing:-.01em;margin:36px 0 14px;text-wrap:balance}
+h1 .dash{color:var(--muted);font-weight:500}
+h1 .w{color:var(--war)} h1 .p{color:var(--peace)}
+.lede{font-size:clamp(18px,2.2vw,21px);color:var(--fg-2);margin:0;max-width:60ch}
+h2{font-family:var(--display);font-stretch:85%;font-weight:700;font-size:26px;line-height:1.15;margin:0 0 12px;text-wrap:balance}
+h3{font-family:var(--display);font-weight:700;font-size:17px;margin:0 0 6px}
+section{margin-top:56px}
+p{margin:0 0 14px}
+.label{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* readouts */
+.readouts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--rule);
+  border:1px solid var(--rule);margin-top:32px}
+.ro{background:var(--surface);padding:14px 16px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.ro .v{font-family:var(--display);font-weight:700;font-size:28px;line-height:1.1;font-variant-numeric:tabular-nums}
+.ro .s{font-size:13.5px;color:var(--fg-2);line-height:1.35}
+.tag{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;
+  padding:2px 8px;border-radius:3px;background:var(--chip);color:var(--fg)}
+.tag i{width:8px;height:8px;border-radius:50%;display:inline-block}
+@media (max-width:760px){.readouts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* controls */
+.controls{display:flex;flex-wrap:wrap;gap:12px 24px;margin:28px 0 12px;align-items:center}
+.seg{display:flex;flex-direction:column;gap:6px}
+.seg .opts{display:inline-flex;border:1px solid var(--rule);border-radius:4px;overflow:hidden;background:var(--surface)}
+.seg button{font:500 13px var(--mono);color:var(--fg-2);background:transparent;border:0;padding:7px 12px;cursor:pointer;border-right:1px solid var(--rule)}
+.seg button:last-child{border-right:0}
+.seg button:hover{color:var(--fg);background:var(--chip)}
+.seg button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+button:focus-visible{outline:2px solid var(--peace);outline-offset:2px}
+
+/* chart */
+.chartbox{background:var(--surface);border:1px solid var(--rule);padding:14px 10px 8px;position:relative}
+.charthead{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:0 8px 6px}
+.charthead .unit{font-size:14px;color:var(--fg-2)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:13.5px;color:var(--fg-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:14px;height:3px;border-radius:2px;display:inline-block}
+#chart{width:100%;display:block}
+#chart text{font-family:var(--mono);font-size:11px;fill:var(--muted)}
+#chart .grid line{stroke:var(--grid)}
+#chart .zero{stroke:var(--fg-2);stroke-width:1}
+#chart .ev line{stroke:var(--muted);stroke-dasharray:2 3}
+#chart .ev circle{fill:var(--surface);stroke:var(--fg-2)}
+#chart .ev text{fill:var(--fg);font-weight:500;text-anchor:middle;font-size:10.5px}
+#chart .domain{display:none}
+#chart .tick line{stroke:var(--rule)}
+.tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--rule);
+  box-shadow:0 4px 18px rgba(0,0,0,.12);padding:8px 10px;font-size:13px;line-height:1.4;min-width:170px;border-radius:4px}
+.tip .d{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-bottom:3px}
+.tip .r{display:flex;justify-content:space-between;gap:14px}
+.tip .r b{font-family:var(--mono);font-weight:500;font-variant-numeric:tabular-nums}
+.note{font-size:14px;color:var(--muted);margin-top:10px}
+
+/* events table */
+.tbl{overflow-x:auto;border-top:1px solid var(--fg)}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:15px}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:left;font-weight:500;padding:10px 10px 8px;border-bottom:1px solid var(--rule)}
+td{padding:10px;border-bottom:1px solid var(--rule);vertical-align:baseline}
+td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.key{display:inline-grid;place-items:center;width:20px;height:20px;border:1px solid var(--fg-2);border-radius:50%;font:500 11px var(--mono)}
+.pos{color:var(--peace)} .neg{color:var(--war)}
+
+/* method */
+.measures{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin-top:8px}
+.measures>div{min-width:0;border-top:2px solid var(--fg);padding-top:12px}
+.formula{font-family:var(--mono);font-size:13.5px;background:var(--chip);padding:8px 10px;border-radius:3px;margin:6px 0 10px;overflow-x:auto;white-space:nowrap}
+.measures p{font-size:15.5px;color:var(--fg-2)}
+@media (max-width:760px){.measures{grid-template-columns:1fr}}
+.terms{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 16px}
+.terms span{font-family:var(--mono);font-size:13px;padding:3px 9px;border-radius:3px;border:1px solid var(--rule);background:var(--surface)}
+.terms.p span{border-color:color-mix(in srgb,var(--peace) 45%,var(--rule))}
+.terms.w span{border-color:color-mix(in srgb,var(--war) 45%,var(--rule))}
+.query{font-family:var(--mono);font-size:13px;background:var(--surface);border:1px solid var(--rule);padding:10px 12px;overflow-x:auto;white-space:pre;margin:8px 0 16px}
+ul.facts{padding-left:18px;margin:0}
+ul.facts li{margin-bottom:8px}
+
+/* data */
+.datagrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px}
+@media (max-width:760px){.datagrid{grid-template-columns:1fr}}
+.btn{font:600 14px var(--display);letter-spacing:.02em;background:var(--fg);color:var(--bg);border:0;padding:11px 18px;border-radius:4px;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--fg);border:1px solid var(--rule);font-weight:500;padding:7px 12px;font-size:13px}
+.cite{font-size:15px;background:var(--surface);border:1px solid var(--rule);padding:12px 14px;margin:8px 0 10px}
+dl.cols{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;font-size:14.5px;margin:12px 0 0}
+dl.cols dt{font-family:var(--mono);font-size:13px}
+dl.cols dd{margin:0;color:var(--fg-2)}
+.status{font-size:14px;color:var(--muted);margin-left:10px}
+footer{margin-top:64px;border-top:1px solid var(--rule);padding-top:14px;font-size:14px;color:var(--muted);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+
+h1{font-family:var(--body);font-weight:700;letter-spacing:-.01em;font-size:clamp(40px,7vw,64px);margin-top:4px}
+h2{font-family:var(--body);font-weight:600}
+.ro .v{font-family:var(--mono);font-weight:500;font-size:24px}
+.btn{font-family:var(--body)!important;display:inline-block;text-decoration:none!important}
+.masthead .inner,.foot .inner{max-width:1080px}
+.wrap>footer{display:none}
+</style>
+
+
+<header class="masthead"><div class="inner"><a class="name" href="../index.html">Danial Sanahurskyj</a><nav><a href="../index.html">Home</a><a href="../data/index.html" aria-current=page>Data</a></nav></div></header>
+<div class="page wide"><div class="wrap">
+
+  <header>
+    <h1><span class="w">War</span><span class="dash">–</span><span class="p">Peace</span> Index</h1>
+    <p class="lede">A daily measure of whether global news coverage of the Russia–Ukraine conflict is leaning toward escalation or de-escalation, and how loud that coverage is. Built from the GDELT news archive, 1 January 2018 to <span class="lastDateLong">the latest day</span>.</p>
+  </header>
+
+  <div class="readouts" id="readouts" aria-label="Latest readings"></div>
+
+  <section style="margin-top:28px" aria-labelledby="chartTitle">
+    <h2 id="chartTitle" class="sr" hidden>Chart</h2>
+    <div class="controls">
+      <div class="seg"><span class="label">Measure</span><div class="opts" id="mMeasure">
+        <button id="m-si" data-v="si" aria-pressed="true">Signed intensity</button>
+        <button id="m-dir" data-v="dir" aria-pressed="false">Direction</button>
+        <button id="m-sal" data-v="sal" aria-pressed="false">Salience</button></div></div>
+      <div class="seg"><span class="label">Smoothing</span><div class="opts" id="mSmooth">
+        <button id="s-1" data-v="1" aria-pressed="false">Daily</button>
+        <button id="s-7" data-v="7" aria-pressed="false">7-day</button>
+        <button id="s-30" data-v="30" aria-pressed="true">30-day</button></div></div>
+      <div class="seg"><span class="label">Range</span><div class="opts" id="mRange">
+        <button id="r-all" data-v="all" aria-pressed="true">2018–</button>
+        <button id="r-inv" data-v="inv" aria-pressed="false">Since invasion</button>
+        <button id="r-25" data-v="25" aria-pressed="false">2025–</button></div></div>
+    </div>
+
+    <div class="chartbox">
+      <div class="charthead">
+        <span class="unit" id="unit"></span>
+        <div class="legend" id="legend"></div>
+      </div>
+      <svg id="chart" role="img" aria-label="War–Peace Index chart"></svg>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+    <p class="note" id="chartNote"></p>
+  </section>
+
+  <section aria-labelledby="evH">
+    <h2 id="evH">Validation dates</h2>
+    <p class="col">The index should move the right way on days with an unambiguous story. Lettered markers on the chart match this table. Values are the raw daily readings.</p>
+    <div class="tbl"><table>
+      <thead><tr><th></th><th>Date</th><th>Event</th><th class="n">Peace</th><th class="n">War</th><th class="n">Direction</th><th class="n">Signed int. ‰</th></tr></thead>
+      <tbody id="evBody"></tbody>
+    </table></div>
+  </section>
+
+  <section aria-labelledby="readH">
+    <h2 id="readH">Three measures, one identity</h2>
+    <p class="col">Each day GDELT reports how many monitored articles match a peace query, how many match a war query, and how many articles it monitored in total. The index splits that into how much of the news is about the conflict and which way it leans.</p>
+    <div class="measures">
+      <div><h3>Salience</h3><div class="formula">(peace + war) / total</div>
+        <p>Share of all monitored news that is classified conflict coverage. Peaked at 19.1% on 27 Feb 2022.</p></div>
+      <div><h3>Direction</h3><div class="formula">(peace − war) / (peace + war)</div>
+        <p>Tone of conflict coverage, bounded between −1 (all war) and +1 (all peace). Unreliable on thin days, so it is blanked when fewer than 50 articles match.</p></div>
+      <div><h3>Signed intensity</h3><div class="formula">(peace − war) / total</div>
+        <p>Salience × direction. Net peace-minus-war articles per 1,000 monitored articles. The main series for regressions; its daily change is the news shock.</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="mH">
+    <h2 id="mH">Methodology</h2>
+    <div class="col">
+      <p>Every query requires both a Ukraine term and a Russia term, which keeps out stories that only mention one side, such as the Flight 752 shoot-down in Iran on 10 January 2020.</p>
+      <div class="query">(Ukraine OR Kyiv) (Russia OR Russian) (&lt;peace terms&gt;)
+(Ukraine OR Kyiv) (Russia OR Russian) (&lt;war terms&gt;)</div>
+      <span class="label">Peace terms</span>
+      <div class="terms p"><span>ceasefire</span><span>"peace talks"</span><span>"peace deal"</span><span>truce</span><span>armistice</span><span>negotiations</span></div>
+      <span class="label">War terms</span>
+      <div class="terms w"><span>invasion</span><span>offensive</span><span>shelling</span><span>airstrike</span><span>bombardment</span><span>mobilization</span><span>escalation</span></div>
+      <ul class="facts">
+        <li><b>Source.</b> GDELT DOC 2.0 API, <span class="num">timelinevolraw</span> mode, unsmoothed. Article counts and the total-monitored normalizer are read by series label.</li>
+        <li><b>Dictionaries are deliberately narrow.</b> Broad words like "summit", "diplomacy", "missile" and "assault" were excluded because they appear in routine coverage that does not signal a change in the conflict.</li>
+        <li><b>Calendar.</b> Every day from 2018-01-01 is a row. GDELT returned no data on <span class="num" id="nMissing">23</span> days; those rows are blank, and the daily change on the following day is blank too, so no multi-day move is reported as a one-day shock.</li>
+        <li><b>Double counting.</b> An article matching both dictionaries counts in both buckets. This inflates salience slightly but cancels out of signed intensity.</li>
+        <li><b>Low volume.</b> <span class="num" id="nLow">10</span> days had fewer than 50 matched articles. Direction is hidden on those days in the chart; signed intensity is kept because the total-news denominator already shrinks them toward zero.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section aria-labelledby="dH">
+    <h2 id="dH">Data</h2>
+    <div class="datagrid">
+      <div>
+        <p>The full daily series as CSV, one row per calendar day. Updated automatically every night with the previous day's data.</p>
+        <a class="btn" href="war_peace_index.csv" download>Download CSV</a><span class="status" id="updStatus"></span>
+        <dl class="cols">
+          <dt>peace, war</dt><dd>Matched article counts</dd>
+          <dt>total_news</dt><dd>GDELT total monitored articles</dd>
+          <dt>salience</dt><dd>(peace + war) / total_news</dd>
+          <dt>direction</dt><dd>(peace − war) / (peace + war)</dd>
+          <dt>signed_intensity</dt><dd>(peace − war) / total_news</dd>
+          <dt>d_signed_intensity</dt><dd>One-day change; blank after a missing day</dd>
+          <dt>low_volume</dt><dd>1 if peace + war &lt; 50</dd>
+        </dl>
+      </div>
+      <div>
+        <span class="label">Suggested citation</span>
+        <div class="cite" id="citeText">Sanahurskyj, D. (2026). War–Peace Index: a daily GDELT-based measure of Russia–Ukraine escalation and de-escalation news [Data set], retrieved <span class="lastDateLong"></span>.</div>
+        <button class="btn ghost" id="copyCite">Copy citation</button><span class="status" id="citeStatus" role="status"></span>
+        <p style="margin-top:18px;font-size:15px;color:var(--fg-2)">Licensed under CC BY 4.0: free to use with attribution. Underlying article counts come from the GDELT Project. The index is used in a forthcoming paper on Ukrainian GDP warrants and geopolitical risk.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer><span>Version 1.0 · data through <span class="num" id="lastIso"></span></span><span>Source: The GDELT Project</span></footer>
+</div></div><footer class="foot"><div class="inner">© 2026 Danial Sanahurskyj</div></footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+
+function parseCSV(text){
+  const lines = text.trim().split(/\r?\n/); const hdr = lines.shift().split(",");
+  const ix = k => hdr.indexOf(k);
+  const num = s => s===""||s==null ? null : +s;
+  const R = {peace:[],war:[],norm:[],sal:[],dir:[],si:[],dsi:[],lv:[]};
+  const rows = lines.map(l=>l.split(","));
+  R.start = rows[0][ix("date")];
+  const map = {peace:"peace",war:"war",norm:"total_news",sal:"salience",dir:"direction",si:"signed_intensity",dsi:"d_signed_intensity",lv:"low_volume"};
+  for(const r of rows) for(const k in map) R[k].push(num(r[ix(map[k])]));
+  return R;
+}
+fetch("war_peace_index.csv", {cache:"no-cache"}).then(r=>{ if(!r.ok) throw new Error(r.status); return r.text(); })
+  .then(t=>main(parseCSV(t)))
+  .catch(()=>{ document.getElementById("readouts").innerHTML = '<div class="ro"><span class="s">The data file could not be loaded. Refresh the page to try again.</span></div>'; });
+
+function main(RAW){
+const N = RAW.si.length;
+const start = new Date(RAW.start + "T00:00:00Z");
+const dates = Array.from({length:N}, (_,i)=> new Date(start.getTime() + i*864e5));
+const dirMasked = RAW.dir.map((v,i)=> RAW.lv[i]===1 ? null : v);
+
+const MEAS = {
+  si:  {name:"Signed intensity", unit:"Net peace − war articles per 1,000 monitored articles", k:1000, arr:RAW.si, div:true, fmt:v=>(v>0?"+":"")+v.toFixed(1)},
+  dir: {name:"Direction", unit:"Tone of conflict coverage, −1 (all war) to +1 (all peace)", k:1, arr:dirMasked, div:true, fmt:v=>(v>0?"+":"")+v.toFixed(2)},
+  sal: {name:"Salience", unit:"Conflict coverage as % of all monitored news", k:100, arr:RAW.sal, div:false, fmt:v=>v.toFixed(2)+"%"}
+};
+const EVENTS = [
+  {k:"A", d:"2022-02-24", t:"Full-scale invasion"},
+  {k:"B", d:"2022-03-29", t:"Istanbul negotiations"},
+  {k:"C", d:"2025-05-16", t:"Istanbul talks"},
+  {k:"D", d:"2025-08-15", t:"Alaska summit"},
+  {k:"E", d:"2025-11-24", t:"Geneva talks"},
+];
+const idxOf = s => Math.round((new Date(s+"T00:00:00Z") - start)/864e5);
+
+function rolling(arr, w){
+  if(w===1) return arr.slice();
+  const out = new Array(arr.length).fill(null); let sum=0, cnt=0;
+  for(let i=0;i<arr.length;i++){
+    if(arr[i]!=null){sum+=arr[i];cnt++;}
+    if(i>=w && arr[i-w]!=null){sum-=arr[i-w];cnt--;}
+    if(i>=w-1 && cnt>=Math.ceil(w/2)) out[i]=sum/cnt;
+  }
+  return out;
+}
+const fmtDate = d3.utcFormat("%-d %b %Y");
+const state = {m:"si", w:30, r:"all"};
+
+/* ---- readouts ---- */
+(function(){
+  const last = N-1;
+  const si30 = rolling(RAW.si,30)[last]*1000, dir30 = rolling(dirMasked,30)[last], sal30 = rolling(RAW.sal,30)[last]*100;
+  // percentile of 30d signed intensity across history
+  const all30 = rolling(RAW.si,30).filter(v=>v!=null).sort((a,b)=>a-b);
+  const rank = all30.filter(v=>v*1000 <= si30).length / all30.length;
+  const lean = si30<0 ? `<span class="tag"><i style="background:var(--war)"></i>War-leaning</span>` : `<span class="tag"><i style="background:var(--peace)"></i>Peace-leaning</span>`;
+  document.getElementById("readouts").innerHTML = `
+    <div class="ro"><span class="label">Signed intensity · 30d</span><span class="v ${si30<0?'neg':'pos'}">${(si30>0?"+":"")+si30.toFixed(1)}‰</span><span class="s">${lean}</span></div>
+    <div class="ro"><span class="label">Direction · 30d</span><span class="v">${(dir30>0?"+":"")+dir30.toFixed(2)}</span><span class="s">${Math.round((1-dir30)/2*100)}% of matched coverage is war-coded</span></div>
+    <div class="ro"><span class="label">Salience · 30d</span><span class="v">${sal30.toFixed(2)}%</span><span class="s">of all monitored news</span></div>
+    <div class="ro"><span class="label">Data through</span><span class="v">${d3.utcFormat("%-d %b")(dates[last])}</span><span class="s">${dates[last].getUTCFullYear()} · ${N.toLocaleString()} daily rows</span></div>`;
+  document.getElementById("nMissing").textContent = RAW.si.filter(v=>v==null).length;
+  document.getElementById("nLow").textContent = RAW.lv.filter(v=>v===1).length;
+})();
+
+/* ---- events table ---- */
+document.getElementById("evBody").innerHTML = EVENTS.map(e=>{
+  const i=idxOf(e.d), si=RAW.si[i]*1000, dr=RAW.dir[i];
+  return `<tr><td><span class="key">${e.k}</span></td><td class="num">${e.d}</td><td>${e.t}</td>
+  <td class="n">${RAW.peace[i].toLocaleString()}</td><td class="n">${RAW.war[i].toLocaleString()}</td>
+  <td class="n ${dr<0?'neg':'pos'}">${(dr>0?"+":"")+dr.toFixed(2)}</td><td class="n ${si<0?'neg':'pos'}">${(si>0?"+":"")+si.toFixed(1)}</td></tr>`;
+}).join("");
+
+/* ---- chart ---- */
+const svg = d3.select("#chart"), tip = document.getElementById("tip"), box = document.querySelector(".chartbox");
+let uid = 0;
+function draw(){
+  const M = MEAS[state.m];
+  const W = svg.node().clientWidth || 800, H = W < 560 ? 280 : 380;
+  const mg = {t:30, r:12, b:26, l:44};
+  svg.attr("viewBox",`0 0 ${W} ${H}`).attr("height",H);
+  svg.selectAll("*").remove();
+
+  const raw = M.arr.map(v=> v==null?null:v*M.k);
+  const sm = rolling(M.arr, state.w).map(v=> v==null?null:v*M.k);
+  let i0 = 0;
+  if(state.r==="inv") i0 = idxOf("2022-01-01");
+  if(state.r==="25") i0 = idxOf("2025-01-01");
+  const x = d3.scaleUtc().domain([dates[i0], dates[N-1]]).range([mg.l, W-mg.r]);
+  const vis = (state.w===1?raw:sm).slice(i0).filter(v=>v!=null);
+  let lo = d3.min(vis), hi = d3.max(vis);
+  if(M.div){ lo=Math.min(lo,0); hi=Math.max(hi,0); } else { lo=0; }
+  if(state.m==="dir"){ lo=-1; hi=1; }
+  if(state.w>1 && state.m!=="dir"){ const pad=(hi-lo)*0.08; hi+= hi>0?pad:0; lo-= lo<0?pad:0; }
+  const y = d3.scaleLinear().domain([lo,hi]).nice(5).range([H-mg.b, mg.t]);
+
+  // grid + axes
+  svg.append("g").attr("class","grid").selectAll("line").data(y.ticks(5)).join("line")
+    .attr("x1",mg.l).attr("x2",W-mg.r).attr("y1",d=>y(d)).attr("y2",d=>y(d));
+  svg.append("g").attr("transform",`translate(${mg.l-6},0)`).call(d3.axisLeft(y).ticks(5).tickSize(0).tickFormat(d=> state.m==="sal"? d+"%" : (d>0?"+":"")+d)).selectAll("text").attr("dx","-2");
+  const xt = W<560 ? 4 : 8;
+  svg.append("g").attr("transform",`translate(0,${H-mg.b+4})`).call(d3.axisBottom(x).ticks(xt).tickSize(0)).selectAll("text").attr("dy","1em");
+
+  // events
+  const ev = svg.append("g").attr("class","ev");
+  EVENTS.forEach(e=>{
+    const dd = new Date(e.d+"T00:00:00Z"); if(dd < dates[i0]) return;
+    const xx = x(dd);
+    ev.append("line").attr("x1",xx).attr("x2",xx).attr("y1",mg.t-4).attr("y2",H-mg.b);
+    ev.append("circle").attr("cx",xx).attr("cy",mg.t-14).attr("r",8);
+    ev.append("text").attr("x",xx).attr("y",mg.t-10.5).text(e.k);
+  });
+  // de-overlap event labels (C/D/E cluster in full view)
+  const cs = ev.selectAll("circle").nodes(), ts = ev.selectAll("text").nodes();
+  for(let j=1;j<cs.length;j++){
+    const prev=+cs[j-1].getAttribute("cx"), cur=+cs[j].getAttribute("cx");
+    if(cur-prev<18){ const nx=prev+18; cs[j].setAttribute("cx",nx); ts[j].setAttribute("x",nx); }
+  }
+
+  const id = ++uid;
+  const defs = svg.append("defs");
+  const y0 = M.div ? y(0) : y(lo);
+  defs.append("clipPath").attr("id",`up${id}`).append("rect").attr("x",0).attr("y",0).attr("width",W).attr("height",Math.max(0,y0));
+  defs.append("clipPath").attr("id",`dn${id}`).append("rect").attr("x",0).attr("y",y0).attr("width",W).attr("height",Math.max(0,H-y0));
+  defs.append("clipPath").attr("id",`pl${id}`).append("rect").attr("x",mg.l).attr("y",0).attr("width",W-mg.l-mg.r).attr("height",H);
+
+  const plot = svg.append("g").attr("clip-path",`url(#pl${id})`);
+  const series = state.w===1 ? raw : sm;
+  const line = d3.line().defined((d,i)=>series[i]!=null).x((d,i)=>x(dates[i])).y((d,i)=>y(series[i])).curve(d3.curveLinear);
+  const area = d3.area().defined((d,i)=>series[i]!=null).x((d,i)=>x(dates[i])).y0(y0).y1((d,i)=>y(series[i]));
+  const rawLine = d3.line().defined(v=>v!=null).x((d,i)=>x(dates[i])).y(v=>y(v));
+
+  if(state.w>1){
+    plot.append("path").datum(raw).attr("d",rawLine).attr("fill","none").attr("stroke","var(--muted)").attr("stroke-opacity",.35).attr("stroke-width",1);
+  }
+  if(M.div){
+    [["up","var(--peace)"],["dn","var(--war)"]].forEach(([c,col])=>{
+      const g = plot.append("g").attr("clip-path",`url(#${c}${id})`);
+      g.append("path").datum(series).attr("d",area).attr("fill",col).attr("fill-opacity",.22);
+      g.append("path").datum(series).attr("d",line).attr("fill","none").attr("stroke",col).attr("stroke-width",state.w===1?1.25:2);
+    });
+    plot.append("line").attr("class","zero").attr("x1",mg.l).attr("x2",W-mg.r).attr("y1",y(0)).attr("y2",y(0));
+  } else {
+    plot.append("path").datum(series).attr("d",area).attr("fill","var(--ink)").attr("fill-opacity",.14);
+    plot.append("path").datum(series).attr("d",line).attr("fill","none").attr("stroke","var(--ink)").attr("stroke-width",state.w===1?1.25:2);
+  }
+
+  // hover layer
+  const hov = svg.append("g").style("pointer-events","none").attr("opacity",0);
+  const vl = hov.append("line").attr("y1",mg.t).attr("y2",H-mg.b).attr("stroke","var(--fg-2)").attr("stroke-width",1);
+  const dot = hov.append("circle").attr("r",4.5).attr("stroke","var(--surface)").attr("stroke-width",2);
+  svg.append("rect").attr("x",mg.l).attr("y",mg.t).attr("width",W-mg.l-mg.r).attr("height",H-mg.t-mg.b).attr("fill","transparent")
+    .on("pointermove", ev=>{
+      const [px] = d3.pointer(ev);
+      let i = Math.round((x.invert(px)-start)/864e5); i=Math.max(i0,Math.min(N-1,i));
+      const v = series[i];
+      hov.attr("opacity",1); vl.attr("x1",x(dates[i])).attr("x2",x(dates[i]));
+      if(v!=null){ dot.attr("cx",x(dates[i])).attr("cy",y(v)).attr("opacity",1)
+        .attr("fill", M.div ? (v>=0?"var(--peace)":"var(--war)") : "var(--ink)"); } else dot.attr("opacity",0);
+      const f = v=> v==null ? "—" : M.fmt(v);
+      const rows = [];
+      if(state.w>1) rows.push([`${state.w}-day avg`, f(sm[i])]);
+      rows.push(["Daily", f(raw[i])]);
+      rows.push(["Peace / war", RAW.peace[i]==null?"—":`${RAW.peace[i].toLocaleString()} / ${RAW.war[i].toLocaleString()}`]);
+      tip.innerHTML = `<div class="d">${fmtDate(dates[i])}</div>` + rows.map(r=>`<div class="r"><span>${r[0]}</span><b>${r[1]}</b></div>`).join("");
+      tip.hidden = false;
+      const bx = box.getBoundingClientRect(), sx = svg.node().getBoundingClientRect();
+      const left = sx.left - bx.left + x(dates[i]);
+      const tw = tip.offsetWidth;
+      tip.style.left = (left + 14 + tw > bx.width ? left - tw - 14 : left + 14) + "px";
+      tip.style.top = (sx.top - bx.top + mg.t + 8) + "px";
+    })
+    .on("pointerleave", ()=>{ hov.attr("opacity",0); tip.hidden = true; });
+
+  // header
+  document.getElementById("unit").textContent = M.unit;
+  document.getElementById("legend").innerHTML = (M.div
+    ? `<span><i style="background:var(--peace)"></i>Peace-leaning</span><span><i style="background:var(--war)"></i>War-leaning</span>`
+    : `<span><i style="background:var(--ink)"></i>${M.name}</span>`)
+    + (state.w>1 ? `<span><i style="background:var(--muted);opacity:.5"></i>Daily</span>` : "");
+  document.getElementById("chartNote").textContent =
+    (state.w>1 ? `Bold line is a trailing ${state.w}-day average. ` : "") +
+    (state.m==="dir" ? "Direction is hidden on days with fewer than 50 matched articles. " : "") +
+    (state.w>1 && state.m!=="dir" ? "The axis fits the average, so the largest daily spikes run off the chart; hover or switch to Daily to see them. " : "") + "Gaps are days GDELT returned no data.";
+}
+
+function bind(groupId, key, cast){
+  document.querySelectorAll(`#${groupId} button`).forEach(b=> b.addEventListener("click", ()=>{
+    state[key] = cast(b.dataset.v);
+    document.querySelectorAll(`#${groupId} button`).forEach(o=> o.setAttribute("aria-pressed", o===b ? "true":"false"));
+    draw();
+  }));
+}
+bind("mMeasure","m",String); bind("mSmooth","w",Number); bind("mRange","r",String);
+draw();
+let rt; window.addEventListener("resize", ()=>{ clearTimeout(rt); rt=setTimeout(draw,120); });
+
+const lastD = dates[N-1];
+document.querySelectorAll(".lastDateLong").forEach(e=> e.textContent = d3.utcFormat("%-d %B %Y")(lastD));
+document.getElementById("lastIso").textContent = lastD.toISOString().slice(0,10);
+} // end main
+
+/* ---- copy citation ---- */
+document.getElementById("copyCite").addEventListener("click", ()=>{
+  const t = document.getElementById("citeText"), s = document.getElementById("citeStatus");
+  navigator.clipboard.writeText(t.textContent).then(()=> s.textContent="Copied.").catch(()=>{
+    const r=document.createRange(); r.selectNodeContents(t); const sel=getSelection(); sel.removeAllRanges(); sel.addRange(r); s.textContent="Selected. Press Ctrl+C to copy.";
+  });
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,59 @@
+DANIAL SANAHURSKYJ - WEBSITE FILES
+==================================
+
+1. Unzip this file (right-click > Extract All).
+2. Open the extracted folder, press Ctrl+A, and DRAG everything onto
+   GitHub's "Upload files" page. (Dragging keeps folders; the
+   "choose your files" button does not.) Leave out this START-HERE.txt.
+3. Commit changes.
+
+GitHub's uploader usually skips the hidden ".github" folder. If you don't
+see a .github folder in your repo after uploading, add it by hand:
+
+   Add file > Create new file
+   Name:  .github/workflows/update-index.yml
+   Paste everything between the lines below, then Commit changes.
+
+------------------------------------------------------------------------
+name: Update War-Peace Index
+
+on:
+  schedule:
+    # 04:17 UTC = about 12:17 a.m. Eastern, just after GDELT's UTC day closes
+    - cron: "17 4 * * *"
+  workflow_dispatch: {}   # lets you run it by hand from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pandas numpy requests
+      - run: python scripts/update_index.py
+      - name: Commit new data
+        run: |
+          git config user.name "index-bot"
+          git config user.email "index-bot@users.noreply.github.com"
+          git add data/war_peace_index.csv
+          git diff --staged --quiet || (git commit -m "Update War-Peace Index $(date -u +%F)" && git push)
+------------------------------------------------------------------------
+
+4. Settings > Pages > Deploy from a branch > main, / (root) > Save.
+5. Settings > Actions > General > Workflow permissions >
+   "Read and write permissions" > Save.
+6. Actions tab > Update War-Peace Index > Run workflow (fills in Aug-today).
+
+Your repo should end up with:
+   .github/workflows/update-index.yml
+   assets/site.css
+   data/index.html
+   data/war_peace_index.csv
+   scripts/update_index.py
+   index.html
