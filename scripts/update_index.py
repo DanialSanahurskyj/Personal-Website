@@ -77,7 +77,9 @@ def decode(df: pd.DataFrame, name: str) -> pd.DataFrame:
     match = [l for l in labels if l not in norm]
     if len(norm) != 1 or len(match) != 1:
         raise RuntimeError(f"could not identify series for {name}: {labels}")
-    p = d.pivot_table(index="date", columns="series", values="value", aggfunc="first")
+    # GDELT returns 15-minute or hourly bins for short windows; summing within each
+    # UTC day gives the same daily totals regardless of the resolution it picks.
+    p = d.pivot_table(index="date", columns="series", values="value", aggfunc="sum")
     return p[[match[0], norm[0]]].rename(columns={match[0]: name, norm[0]: f"norm_{name}"})
 
 
