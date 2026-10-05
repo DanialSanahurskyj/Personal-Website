@@ -25,4 +25,7 @@ jobs:
           git config user.name "index-bot"
           git config user.email "index-bot@users.noreply.github.com"
           git add data/war_peace_index.csv
-          git diff --staged --quiet || (git commit -m "Update War-Peace Index $(date -u +%F)" && git push)
+          git diff --staged --quiet && exit 0
+          git commit -m "Update War-Peace Index $(date -u +%F)"
+          git pull --rebase origin main
+          git push
