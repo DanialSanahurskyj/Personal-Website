@@ -32,8 +32,8 @@ OVERLAP_DAYS = 7              # always re-pull the last week so late GDELT revis
 LOOKBACK_DAYS = 45            # how far back to look for missing or incomplete days to backfill
 INCOMPLETE_SHARE = 0.5        # a day with < 50% of normal total volume is treated as not finished
 MIN_RELEVANT_ARTICLES = 50
-MAX_TRIES = 8
-MAX_WAIT = 600
+MAX_TRIES = 4
+MAX_WAIT = 120
 
 CONTEXT = "(Ukraine OR Kyiv) (Russia OR Russian)"
 PEACE = '(ceasefire OR "peace talks" OR "peace deal" OR truce OR armistice OR negotiations)'
@@ -47,7 +47,7 @@ def pull(query: str, start: str, end: str) -> pd.DataFrame:
     wait = 30
     for attempt in range(1, MAX_TRIES + 1):
         try:
-            r = requests.get(API, params=params, timeout=120)
+            r = requests.get(API, params=params, timeout=60)
         except requests.exceptions.RequestException as exc:
             print(f"  [{attempt}] connection error {exc.__class__.__name__}; waiting {wait}s")
             time.sleep(wait); wait = min(wait * 2, MAX_WAIT); continue
@@ -64,7 +64,7 @@ def pull(query: str, start: str, end: str) -> pd.DataFrame:
         if df.shape[1] < 3:
             raise RuntimeError(f"unexpected response columns: {list(df.columns)}")
         return df
-    raise RuntimeError("GDELT kept throttling; giving up for tonight")
+    raise RuntimeError("GDELT is throttling or not responding; giving up until the next scheduled run")
 
 
 def decode(df: pd.DataFrame, name: str) -> pd.DataFrame:
