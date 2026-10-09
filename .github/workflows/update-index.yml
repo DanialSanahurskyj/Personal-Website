@@ -2,8 +2,10 @@ name: Update War-Peace Index
 
 on:
   schedule:
-    # 04:17 UTC = about 12:17 a.m. Eastern, just after GDELT's UTC day closes
+    # 04:17 UTC = about 12:17 a.m. Eastern, just after GDELT's UTC day closes.
+    # 16:17 UTC is a second pass that picks up days GDELT finished late.
     - cron: "17 4 * * *"
+    - cron: "17 16 * * *"
   workflow_dispatch: {}   # lets you run it by hand from the Actions tab
 
 permissions:
