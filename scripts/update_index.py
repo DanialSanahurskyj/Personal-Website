@@ -28,7 +28,9 @@ ROOT = Path(__file__).resolve().parents[1]
 CSV = ROOT / "data" / "war_peace_index.csv"
 
 API = "https://api.gdeltproject.org/api/v2/doc/doc"
-OVERLAP_DAYS = 7              # re-pull recent days so late GDELT revisions are picked up
+OVERLAP_DAYS = 7              # always re-pull the last week so late GDELT revisions are picked up
+LOOKBACK_DAYS = 45            # how far back to look for missing or incomplete days to backfill
+INCOMPLETE_SHARE = 0.5        # a day with < 50% of normal total volume is treated as not finished
 MIN_RELEVANT_ARTICLES = 50
 MAX_TRIES = 8
 MAX_WAIT = 600
@@ -85,11 +87,19 @@ def decode(df: pd.DataFrame, name: str) -> pd.DataFrame:
 
 def main() -> int:
     old = pd.read_csv(CSV, parse_dates=["date"]).set_index("date")
-    last = old.index.max()
+    have = old["total_news"].dropna()
+    last_good = have.index.max()
     yesterday = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timedelta(days=1)
-    win_start = last - pd.Timedelta(days=OVERLAP_DAYS)
-    if yesterday <= last - pd.Timedelta(days=1):
-        print("Already up to date."); return 0
+
+    # Re-pull from the earliest recent day that is missing or looks incomplete, so a
+    # GDELT outage of any length (up to LOOKBACK_DAYS) is backfilled once it recovers.
+    recent = old.loc[old.index >= yesterday - pd.Timedelta(days=LOOKBACK_DAYS), "total_news"]
+    recent = recent.reindex(pd.date_range(recent.index.min(), yesterday, freq="D"))
+    med = have.iloc[-60:].median()
+    weak = recent[recent.isna() | (recent < INCOMPLETE_SHARE * med)]
+    win_start = last_good - pd.Timedelta(days=OVERLAP_DAYS)
+    if len(weak):
+        win_start = min(win_start, weak.index.min())
 
     start, end = win_start.strftime("%Y%m%d000000"), yesterday.strftime("%Y%m%d235959")
     print(f"Pulling {win_start.date()} to {yesterday.date()}")
@@ -103,14 +113,22 @@ def main() -> int:
     new["total_news"] = new[["norm_peace", "norm_war"]].mean(axis=1)
     new = new[["peace", "war", "total_news"]].dropna()
     if new.empty:
-        print("GDELT returned no rows for the window; leaving data unchanged."); return 1
+        print("GDELT returned no rows for the window (likely a GDELT outage); leaving data unchanged.")
+        return 0
 
-    counts = old[["peace", "war", "total_news"]]
-    counts = pd.concat([counts[counts.index < new.index.min()], new])
-    counts = counts[~counts.index.duplicated(keep="last")].sort_index()
-    cal = pd.date_range(counts.index.min(), max(counts.index.max(), last), freq="D")
+    counts = old.loc[old.index < win_start, ["peace", "war", "total_news"]]
+    counts = pd.concat([counts, new]).sort_index()
+    counts = counts[~counts.index.duplicated(keep="last")]
+
+    # Drop trailing days GDELT has not finished processing (total volume far below
+    # normal). They are re-pulled on the next run instead of being published as real.
+    ref = counts["total_news"].dropna().iloc[-90:-7].median()
+    while len(counts) and not (counts["total_news"].iloc[-1] >= INCOMPLETE_SHARE * ref):
+        print(f"  holding back {counts.index[-1].date()} (incomplete: {counts['total_news'].iloc[-1]})")
+        counts = counts.iloc[:-1]
+
+    cal = pd.date_range(counts.index.min(), counts.index.max(), freq="D")
     c = counts.reindex(cal)
-
     rel = c["peace"] + c["war"]
     ok = c["total_news"] > 0
     out = pd.DataFrame(index=cal)
@@ -124,8 +142,7 @@ def main() -> int:
     out["low_volume"] = rel.lt(MIN_RELEVANT_ARTICLES).astype("Int64").where(rel.notna())
     out.index.name = "date"
     out.to_csv(CSV, date_format="%Y-%m-%d", float_format="%.8g")
-    added = (out.index > last).sum()
-    print(f"Wrote {len(out)} rows through {out.index.max().date()} ({added} new days).")
+    print(f"Wrote {len(out)} rows through {out.index.max().date()} (previously {last_good.date()}).")
     return 0
 
 
