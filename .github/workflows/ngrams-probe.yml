@@ -1,0 +1,22 @@
+name: Test Web NGrams source
+
+on:
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "UTC day to test, YYYY-MM-DD (leave blank for yesterday)"
+        required: false
+        default: ""
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pandas requests
+      - name: Probe Web NGrams
+        run: python scripts/ngrams_probe.py ${{ github.event.inputs.day }}
