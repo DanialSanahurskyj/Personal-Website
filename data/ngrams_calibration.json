@@ -1,0 +1,11 @@
+{
+  "overlap_start": "2026-08-28",
+  "overlap_end": "2026-10-01",
+  "overlap_days": 28,
+  "k_peace": 4.888522344364517,
+  "k_war": 3.765692412209873,
+  "corr_signed_intensity_daily": 0.8850219756691973,
+  "corr_signed_intensity_7d": 0.9630742817395485,
+  "corr_direction_daily": 0.8786647160243118,
+  "created_utc": "2026-10-14T18:59:18.369977+00:00"
+}
