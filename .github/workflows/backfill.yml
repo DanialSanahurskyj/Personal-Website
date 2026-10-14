@@ -1,0 +1,82 @@
+name: Backfill War-Peace Index (parallel)
+
+# One-time catch-up: processes every missing day at once on up to 20 machines,
+# then merges, calibrates and publishes. Run it by hand from the Actions tab.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: war-peace-index
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      days: ${{ steps.list.outputs.days }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pandas numpy requests
+      - id: list
+        run: |
+          days=$(python scripts/update_ngrams.py --list-days)
+          echo "Days to process: $days"
+          echo "days=$days" >> "$GITHUB_OUTPUT"
+
+  day:
+    needs: plan
+    if: needs.plan.outputs.days != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        day: ${{ fromJson(needs.plan.outputs.days) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pandas numpy requests
+      - run: python scripts/update_ngrams.py --day ${{ matrix.day }} parts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-${{ matrix.day }}
+          path: parts/
+          retention-days: 3
+
+  merge:
+    needs: [plan, day]
+    if: always() && needs.plan.outputs.days != '[]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pandas numpy requests
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: part-*
+          path: parts
+          merge-multiple: true
+      - name: Merge, calibrate and publish
+        run: python scripts/update_ngrams.py --merge parts
+      - name: Commit new data
+        run: |
+          git config user.name "index-bot"
+          git config user.email "index-bot@users.noreply.github.com"
+          for f in data/war_peace_index.csv data/ngrams_daily.csv data/ngrams_calibration.json; do
+            if [ -f "$f" ]; then git add "$f"; fi
+          done
+          git diff --staged --quiet && exit 0
+          git commit -m "Backfill War-Peace Index $(date -u +%F)"
+          git pull --rebase origin main
+          git push

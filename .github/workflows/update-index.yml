@@ -2,31 +2,39 @@ name: Update War-Peace Index
 
 on:
   schedule:
-    # 04:17 UTC = about 12:17 a.m. Eastern, just after GDELT's UTC day closes.
-    # 16:17 UTC is a second pass that picks up days GDELT finished late.
-    - cron: "17 4 * * *"
-    - cron: "17 16 * * *"
+    # Every 3 hours. Most runs finish in a minute with nothing to do; the first run
+    # after midnight UTC adds the previous day once GDELT has finished publishing it.
+    # While there is a backlog, each run works through up to 6 days.
+    - cron: "37 */3 * * *"
   workflow_dispatch: {}   # lets you run it by hand from the Actions tab
 
 permissions:
   contents: write
 
+concurrency:
+  group: war-peace-index
+  cancel-in-progress: false
+
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install pandas numpy requests
-      - run: python scripts/update_index.py
+      - name: Update the index from GDELT Web NGrams
+        run: python scripts/update_ngrams.py
       - name: Commit new data
+        if: always()
         run: |
           git config user.name "index-bot"
           git config user.email "index-bot@users.noreply.github.com"
-          git add data/war_peace_index.csv
+          for f in data/war_peace_index.csv data/ngrams_daily.csv data/ngrams_calibration.json; do
+            if [ -f "$f" ]; then git add "$f"; fi
+          done
           git diff --staged --quiet && exit 0
           git commit -m "Update War-Peace Index $(date -u +%F)"
           git pull --rebase origin main
