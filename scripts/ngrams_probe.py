@@ -1,125 +1,135 @@
 """
 One-time test of GDELT's Web NGrams files as a source for the War-Peace Index.
+Does NOT change data/war_peace_index.csv.
 
-It samples minute files from one recent UTC day, applies the index's exact keyword
-rules at the article level, and reports file sizes, speed, article counts and matches.
-It does NOT change data/war_peace_index.csv.
-
-Files (published every minute, per GDELT):
-  https://data.gdeltproject.org/gdeltv5/weblegacy/ngrams/YYYYMMDDHHMM00.ngrams.txt.gz
-      tab-separated: DOCID <tab> QUADGRAM <tab> COUNT   (DOCID restarts in each file)
-  https://data.gdeltproject.org/gdeltv5/weblegacy/ngrams/YYYYMMDDHHMM00.toc.json.gz
-      one JSON object per article: ID, date, lang, title, url, ...
+Step 1 checks which file addresses exist:
+  v3: https://data.gdeltproject.org/gdeltv3/webngrams/YYYYMMDDHHMMSS.webngrams.json.gz
+      JSON lines: date, ngram, lang, type, pos, pre, post, url   (Web NGrams 3.0, 2020-present)
+  v5: https://data.gdeltproject.org/gdeltv5/weblegacy/ngrams/YYYYMMDDHHMM00.ngrams.txt.gz
+Step 2 samples one minute per hour from one UTC day using the v3 files, applies the
+index's keyword rules per article (URL), and reports size, speed, counts and languages.
 """
 from __future__ import annotations
 
 import gzip
-import io
 import json
 import sys
 import time
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from collections import Counter
 
 import pandas as pd
 import requests
 
-BASE = "https://data.gdeltproject.org/gdeltv5/weblegacy/ngrams/"
-SAMPLE_EVERY_MINUTES = 15          # sample 96 of the day's 1,440 minutes
-WORKERS = 8
+V3 = "https://data.gdeltproject.org/gdeltv3/webngrams/{s}.webngrams.json.gz"
+V5 = "https://data.gdeltproject.org/gdeltv5/weblegacy/ngrams/{s}.ngrams.txt.gz"
+WORKERS = 6
+TIME_BUDGET_S = 15 * 60
 
-# Same rules as the original index (case-insensitive, whole words).
 UKRAINE = {"ukraine", "kyiv"}
 RUSSIA = {"russia", "russian"}
 PEACE_WORDS = {"ceasefire", "truce", "armistice", "negotiations"}
-PEACE_PHRASES = ["peace talks", "peace deal"]
 WAR_WORDS = {"invasion", "offensive", "shelling", "airstrike", "bombardment", "mobilization", "escalation"}
+T0 = time.time()
 
 
-def fetch(url: str) -> tuple[bytes | None, int]:
-    for attempt in range(3):
-        try:
-            r = requests.get(url, timeout=60)
-        except requests.RequestException:
-            time.sleep(5); continue
-        if r.status_code == 200:
-            return r.content, 200
-        if r.status_code == 404:
-            return None, 404
-        time.sleep(5)
-    return None, -1
+def status(url: str) -> int:
+    try:
+        return requests.head(url, timeout=30, allow_redirects=True).status_code
+    except requests.RequestException as exc:
+        print(f"    {exc.__class__.__name__} for {url}")
+        return -1
 
 
-def process_minute(stamp: str) -> dict:
-    out = {"stamp": stamp, "ok": False, "bytes": 0, "docs": 0, "ctx": 0, "peace": 0, "war": 0,
-           "langs": Counter(), "lines": 0, "status": None}
-    raw, status = fetch(f"{BASE}{stamp}.ngrams.txt.gz")
-    out["status"] = status
-    if raw is None:
+def check_addresses(day: pd.Timestamp) -> None:
+    print("Step 1: which file addresses exist?")
+    tests = {
+        "v5 blog example (2026-06-30 20:16)": V5.format(s="20260630201600"),
+        "v5 test day 12:00": V5.format(s=f"{day:%Y%m%d}120000"),
+        "v3 blog example (2020-01-01 00:01)": V3.format(s="20200101000100"),
+        "v3 2026-10-01 12:00": V3.format(s="20261001120000"),
+        "v3 test day 12:00": V3.format(s=f"{day:%Y%m%d}120000"),
+        "v3 test day 12:01": V3.format(s=f"{day:%Y%m%d}120100"),
+    }
+    for name, url in tests.items():
+        print(f"  {status(url):>4}  {name}")
+
+
+def process_v3(stamp: str) -> dict:
+    out = {"stamp": stamp, "status": None, "bytes": 0, "records": 0,
+           "docs": {}, "langs": Counter(), "secs": 0.0}
+    if time.time() - T0 > TIME_BUDGET_S:
+        out["status"] = "skipped (time budget)"; return out
+    t = time.time()
+    try:
+        r = requests.get(V3.format(s=stamp), timeout=120, stream=True)
+    except requests.RequestException as exc:
+        out["status"] = exc.__class__.__name__; return out
+    out["status"] = r.status_code
+    if r.status_code != 200:
         return out
-    out["bytes"] += len(raw)
-    flags: dict[str, set] = {}
-    with gzip.open(io.BytesIO(raw), "rt", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            out["lines"] += 1
-            parts = line.rstrip("\n").split("\t")
-            if len(parts) < 2:
-                continue
-            doc, gram = parts[0], " " + parts[1].lower() + " "
-            fl = flags.setdefault(doc, set())
-            words = set(gram.split())
-            if words & UKRAINE: fl.add("u")
-            if words & RUSSIA: fl.add("r")
-            if words & PEACE_WORDS or any(f" {p} " in gram for p in PEACE_PHRASES): fl.add("p")
-            if words & WAR_WORDS: fl.add("w")
-    out["docs"] = len(flags)
-    for fl in flags.values():
-        if "u" in fl and "r" in fl:
-            out["ctx"] += 1
-            out["peace"] += "p" in fl
-            out["war"] += "w" in fl
-    toc, _ = fetch(f"{BASE}{stamp}.toc.json.gz")
-    if toc:
-        out["bytes"] += len(toc)
-        for ln in gzip.decompress(toc).decode("utf-8", "replace").splitlines():
+    r.raw.decode_content = False
+    docs: dict[str, set] = defaultdict(set)
+    langs: dict[str, str] = {}
+    with gzip.GzipFile(fileobj=r.raw) as gz:
+        for line in gz:
+            out["records"] += 1
             try:
-                out["langs"][json.loads(ln).get("lang", "?")] += 1
+                rec = json.loads(line)
             except json.JSONDecodeError:
-                pass
-    out["ok"] = True
+                continue
+            url = rec.get("url", "")
+            w = str(rec.get("ngram", "")).lower().strip(".,;:!?\"'()")
+            fl = docs[url]
+            langs.setdefault(url, rec.get("lang", "?"))
+            if w in UKRAINE: fl.add("u")
+            elif w in RUSSIA: fl.add("r")
+            elif w in PEACE_WORDS: fl.add("p")
+            elif w in WAR_WORDS: fl.add("w")
+            elif w == "peace":
+                nxt = str(rec.get("post", "")).lower().lstrip()
+                if nxt.startswith(("talks", "deal")): fl.add("p")
+    out["bytes"] = r.raw.tell() if hasattr(r.raw, "tell") else 0
+    out["docs"] = docs
+    out["langs"] = Counter(langs.values())
+    out["secs"] = time.time() - t
     return out
 
 
 def main() -> int:
     day = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timedelta(days=1)
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 1 and sys.argv[1]:
         day = pd.Timestamp(sys.argv[1])
-    stamps = [(day + pd.Timedelta(minutes=m)).strftime("%Y%m%d%H%M00")
-              for m in range(0, 1440, SAMPLE_EVERY_MINUTES)]
-    print(f"Probing {len(stamps)} minute files from {day.date()} (every {SAMPLE_EVERY_MINUTES} min)")
-    t0 = time.time()
-    with ThreadPoolExecutor(WORKERS) as ex:
-        res = list(ex.map(process_minute, stamps))
-    secs = time.time() - t0
+    check_addresses(day)
 
-    got = [r for r in res if r["ok"]]
-    status = Counter(r["status"] for r in res)
-    print(f"HTTP results: {dict(status)}  (200 = file found, 404 = no file for that minute)")
+    stamps = [(day + pd.Timedelta(hours=h, minutes=5)).strftime("%Y%m%d%H%M%S") for h in range(24)]
+    print(f"\nStep 2: sampling one minute per hour from {day.date()} (v3 files)")
+    with ThreadPoolExecutor(WORKERS) as ex:
+        res = list(ex.map(process_v3, stamps))
+    print("  HTTP results:", dict(Counter(str(r["status"]) for r in res)))
+    got = [r for r in res if r["status"] == 200]
     if not got:
-        print("No files retrieved. Check the URL pattern or the date."); return 1
-    tot = {k: sum(r[k] for r in got) for k in ("bytes", "docs", "ctx", "peace", "war", "lines")}
+        print("  No v3 files retrieved."); return 1
+
+    recs = sum(r["records"] for r in got)
+    mb = sum(r["bytes"] for r in got) / 1e6
+    docs = ctx = peace = war = 0
     langs = Counter()
-    for r in got: langs.update(r["langs"])
-    print(f"Files found: {len(got)} of {len(stamps)}   time: {secs:.0f}s")
-    print(f"Sample: {tot['bytes']/1e6:,.1f} MB downloaded, {tot['lines']:,} ngram lines, {tot['docs']:,} articles")
-    print(f"Sample matches: Ukraine+Russia {tot['ctx']:,} | peace {tot['peace']:,} | war {tot['war']:,}")
-    full_mb = tot["bytes"] / 1e6 * SAMPLE_EVERY_MINUTES * len(stamps) / max(len(got), 1)
-    print(f"Estimated full day: ~{full_mb:,.0f} MB, ~{secs*SAMPLE_EVERY_MINUTES/60:,.0f} min to process here")
-    print(f"Estimated full-day articles: ~{tot['docs']*SAMPLE_EVERY_MINUTES*len(stamps)/max(len(got),1):,.0f}")
-    print("Languages in sample:", ", ".join(f"{k}:{v}" for k, v in langs.most_common(12)))
-    if tot["ctx"]:
-        print(f"Sample signed share (peace - war) / Ukraine+Russia articles: "
-              f"{(tot['peace']-tot['war'])/tot['ctx']:+.3f}")
+    for r in got:
+        langs.update(r["langs"])
+        for fl in r["docs"].values():
+            docs += 1
+            if "u" in fl and "r" in fl:
+                ctx += 1; peace += "p" in fl; war += "w" in fl
+    per_file_s = sum(r["secs"] for r in got) / len(got)
+    print(f"  Files read: {len(got)}  |  {mb:,.1f} MB compressed  |  {recs:,} records  |  {docs:,} articles")
+    print(f"  Avg per file: {mb/len(got):,.1f} MB, {per_file_s:,.1f} s")
+    print(f"  Matches: Ukraine+Russia {ctx:,} | peace {peace:,} | war {war:,}")
+    print(f"  Estimated full day (1,440 files): ~{mb/len(got)*1440/1000:,.1f} GB, "
+          f"~{per_file_s*1440/WORKERS/60:,.0f} min with {WORKERS} parallel downloads, "
+          f"~{docs/len(got)*1440:,.0f} articles, ~{ctx/len(got)*1440:,.0f} Ukraine+Russia articles")
+    print("  Languages:", ", ".join(f"{k}:{v}" for k, v in langs.most_common(12)))
+    print(f"  Total run time: {time.time()-T0:,.0f} s")
     return 0
 
 
