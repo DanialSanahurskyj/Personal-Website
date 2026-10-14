@@ -29,16 +29,21 @@ CSV = ROOT / "data" / "war_peace_index.csv"
 
 API = "https://api.gdeltproject.org/api/v2/doc/doc"
 OVERLAP_DAYS = 7              # always re-pull the last week so late GDELT revisions are picked up
-LOOKBACK_DAYS = 45            # how far back to look for missing or incomplete days to backfill
+LOOKBACK_DAYS = 21            # how far back to look for missing or incomplete days to backfill
 INCOMPLETE_SHARE = 0.5        # a day with < 50% of normal total volume is treated as not finished
 MIN_RELEVANT_ARTICLES = 50
-MAX_TRIES = 4
+MAX_TRIES = 3
 MAX_WAIT = 120
+REQUEST_TIMEOUT = 180       # long-window searches can take a couple of minutes to answer
 
 CONTEXT = "(Ukraine OR Kyiv) (Russia OR Russian)"
 PEACE = '(ceasefire OR "peace talks" OR "peace deal" OR truce OR armistice OR negotiations)'
 WAR = "(invasion OR offensive OR shelling OR airstrike OR bombardment OR mobilization OR escalation)"
 QUERIES = {"peace": f"{CONTEXT} {PEACE}", "war": f"{CONTEXT} {WAR}"}
+
+
+class GdeltUnavailable(Exception):
+    """GDELT is down, throttling, or returned nothing usable. Try again next run."""
 
 
 def pull(query: str, start: str, end: str) -> pd.DataFrame:
@@ -47,7 +52,7 @@ def pull(query: str, start: str, end: str) -> pd.DataFrame:
     wait = 30
     for attempt in range(1, MAX_TRIES + 1):
         try:
-            r = requests.get(API, params=params, timeout=60)
+            r = requests.get(API, params=params, timeout=REQUEST_TIMEOUT)
         except requests.exceptions.RequestException as exc:
             print(f"  [{attempt}] connection error {exc.__class__.__name__}; waiting {wait}s")
             time.sleep(wait); wait = min(wait * 2, MAX_WAIT); continue
@@ -56,15 +61,21 @@ def pull(query: str, start: str, end: str) -> pd.DataFrame:
             delay = min((int(ra) if ra.isdigit() else wait) + random.uniform(0, 10), MAX_WAIT)
             print(f"  [{attempt}] throttled; waiting {delay:.0f}s")
             time.sleep(delay); wait = min(wait * 2, MAX_WAIT); continue
-        r.raise_for_status()
-        text = r.text.lstrip("﻿\n\r \t")
+        if r.status_code >= 500:
+            print(f"  [{attempt}] GDELT server error {r.status_code}; waiting {wait}s")
+            time.sleep(wait); wait = min(wait * 2, MAX_WAIT); continue
+        if r.status_code != 200:
+            raise GdeltUnavailable(f"HTTP {r.status_code}: {r.text[:200]!r}")
+        text = r.text.lstrip("\ufeff\n\r \t")
+        if not text:
+            raise GdeltUnavailable("GDELT returned an empty response")
         if text.lower().startswith(("<html", "<!doctype")):
-            raise RuntimeError("GDELT returned HTML instead of CSV")
-        df = pd.read_csv(StringIO(r.text))
+            raise GdeltUnavailable(f"GDELT returned a web page instead of data: {text[:200]!r}")
+        df = pd.read_csv(StringIO(text))
         if df.shape[1] < 3:
-            raise RuntimeError(f"unexpected response columns: {list(df.columns)}")
+            raise GdeltUnavailable(f"unexpected response: columns {list(df.columns)}, start {text[:200]!r}")
         return df
-    raise RuntimeError("GDELT is throttling or not responding; giving up until the next scheduled run")
+    raise GdeltUnavailable("GDELT did not answer after several tries (timeouts or throttling)")
 
 
 def decode(df: pd.DataFrame, name: str) -> pd.DataFrame:
@@ -104,9 +115,15 @@ def main() -> int:
     start, end = win_start.strftime("%Y%m%d000000"), yesterday.strftime("%Y%m%d235959")
     print(f"Pulling {win_start.date()} to {yesterday.date()}")
     got = {}
-    for i, (name, q) in enumerate(QUERIES.items()):
-        if i: time.sleep(30)
-        got[name] = decode(pull(q, start, end), name)
+    try:
+        for i, (name, q) in enumerate(QUERIES.items()):
+            if i: time.sleep(30)
+            got[name] = decode(pull(q, start, end), name)
+    except GdeltUnavailable as exc:
+        # Not a bug in this script: GDELT is down or throttling. Leave the data as it
+        # is and finish cleanly; the next scheduled run picks up where this left off.
+        print(f"GDELT unavailable, data left unchanged: {exc}")
+        return 0
 
     new = got["peace"].join(got["war"], how="outer")
     new = new[(new.index >= win_start) & (new.index <= yesterday)]
@@ -116,9 +133,10 @@ def main() -> int:
         print("GDELT returned no rows for the window (likely a GDELT outage); leaving data unchanged.")
         return 0
 
-    counts = old.loc[old.index < win_start, ["peace", "war", "total_news"]]
-    counts = pd.concat([counts, new]).sort_index()
-    counts = counts[~counts.index.duplicated(keep="last")]
+    # Keep every day we already have, and overwrite only the days GDELT just returned.
+    # A day GDELT leaves out of this response keeps its old value instead of going blank.
+    counts = old[["peace", "war", "total_news"]].dropna()
+    counts = pd.concat([counts[~counts.index.isin(new.index)], new]).sort_index()
 
     # Drop trailing days GDELT has not finished processing (total volume far below
     # normal). They are re-pulled on the next run instead of being published as real.
