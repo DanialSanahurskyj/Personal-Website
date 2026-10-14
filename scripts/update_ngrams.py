@@ -61,14 +61,30 @@ WAR_WORDS = {b"invasion", b"offensive", b"shelling", b"airstrike", b"bombardment
 U, R, P, W = 1, 2, 4, 8
 
 
-def _field(line: bytes, key: bytes) -> bytes:
-    """Fast extraction of a simple string field from a JSON line (no full parse)."""
-    i = line.find(key)
+def _field(line: bytes, name: bytes, last: bool = False) -> bytes:
+    """Fast extraction of a string field from one JSON line without a full parse.
+    Works with or without spaces around the colon ("url":"x" and "url": "x").
+    `last=True` takes the final occurrence (the url field ends each record)."""
+    key = b'"' + name + b'"'
+    i = line.rfind(key) if last else line.find(key)
     if i < 0:
         return b""
-    i += len(key)
-    j = line.find(b'"', i)
-    return line[i:j] if j > i else b""
+    i = line.find(b":", i + len(key))
+    if i < 0:
+        return b""
+    i += 1
+    while i < len(line) and line[i:i + 1] in b" \t":
+        i += 1
+    if line[i:i + 1] != b'"':
+        return b""
+    j = i + 1
+    while True:
+        j = line.find(b'"', j)
+        if j < 0:
+            return b""
+        if line[j - 1:j] != b"\\":
+            return line[i + 1:j]
+        j += 1
 
 
 def process_file(stamp: str) -> tuple[str, int, dict, list]:
@@ -87,20 +103,32 @@ def process_file(stamp: str) -> tuple[str, int, dict, list]:
     r.raw.decode_content = False
     hits: dict[bytes, int] = {}
     urls: set[bytes] = set()
+    nlines = 0
     try:
         with gzip.GzipFile(fileobj=r.raw) as gz:
             for line in gz:
-                u = _field(line, b'"url":"')
+                nlines += 1
+                u = _field(line, b"url", last=True)
+                w = _field(line, b"ngram")
+                post = None
+                if not u or not w:
+                    try:                       # fallback: full JSON parse
+                        rec = json.loads(line)
+                        u = str(rec.get("url", "")).encode()
+                        w = str(rec.get("ngram", "")).encode()
+                        post = str(rec.get("post", "")).encode()
+                    except (ValueError, AttributeError):
+                        continue
                 if not u:
                     continue
                 urls.add(u)
-                w = _field(line, b'"ngram":"').lower().strip(b".,;:!?'()\\")
+                w = w.lower().strip(b".,;:!?'()\\")
                 if w in UKRAINE: f = U
                 elif w in RUSSIA: f = R
                 elif w in PEACE_WORDS: f = P
                 elif w in WAR_WORDS: f = W
                 elif w == b"peace":
-                    post = _field(line, b'"post":"').lower().lstrip()
+                    post = (post if post is not None else _field(line, b"post")).lower().lstrip()
                     f = P if post.startswith((b"talks", b"deal")) else 0
                 else:
                     f = 0
@@ -108,6 +136,9 @@ def process_file(stamp: str) -> tuple[str, int, dict, list]:
                     hits[u] = hits.get(u, 0) | f
     except (OSError, EOFError):
         return stamp, -2, {}, []
+    if nlines and not urls:
+        print(f"  {stamp}: {nlines} lines but no articles could be read (format changed?)")
+        return stamp, -3, {}, []
     return stamp, 200, {k.decode("utf-8", "replace"): v for k, v in hits.items()}, \
         [x.decode("utf-8", "replace") for x in urls]
 
@@ -153,15 +184,20 @@ def count_day(day: pd.Timestamp, pool: ProcessPoolExecutor) -> dict:
 
 def load_raw() -> pd.DataFrame:
     if RAW_CSV.exists():
-        return pd.read_csv(RAW_CSV, parse_dates=["date"]).set_index("date")
+        raw = pd.read_csv(RAW_CSV, parse_dates=["date"]).set_index("date")
+        # A day with no articles was a failed read, never a real result: redo it.
+        if "complete" in raw.columns:
+            raw.loc[raw["total_news"].fillna(0) <= 0, "complete"] = 0
+        return raw
     return pd.DataFrame(columns=["files", "errors", "total_news", "context", "peace", "war"])
 
 
 def is_complete(row: dict, raw: pd.DataFrame) -> bool:
-    good = raw[raw["errors"] == 0] if len(raw) else raw
+    good = raw[(raw["errors"] == 0) & (raw["total_news"] > 0)] if len(raw) else raw
     typ_files = good["files"].median() if len(good) >= 3 else TYPICAL_FILES
     typ_docs = good["total_news"].median() if len(good) >= 3 else 0
-    return (row["errors"] == 0 and row["files"] >= MIN_FILES_SHARE * typ_files
+    return (row["errors"] == 0 and row["total_news"] > 0 and row["context"] > 0
+            and row["files"] >= MIN_FILES_SHARE * typ_files
             and row["total_news"] >= MIN_DOCS_SHARE * typ_docs)
 
 
