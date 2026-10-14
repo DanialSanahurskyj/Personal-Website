@@ -41,7 +41,7 @@ def status(url: str) -> int:
         return -1
 
 
-def check_addresses(day: pd.Timestamp) -> None:
+def check_addresses(day: pd.Timestamp) -> list[int]:
     print("Step 1: which file addresses exist?")
     tests = {
         "v5 blog example (2026-06-30 20:16)": V5.format(s="20260630201600"),
@@ -53,6 +53,11 @@ def check_addresses(day: pd.Timestamp) -> None:
     }
     for name, url in tests.items():
         print(f"  {status(url):>4}  {name}")
+    print("  Which minutes between 12:00 and 12:31 have a v3 file?")
+    found = [m for m in range(0, 32)
+             if status(V3.format(s=f"{day:%Y%m%d}12{m:02d}00")) == 200]
+    print(f"    minutes with files: {found}")
+    return found
 
 
 def process_v3(stamp: str) -> dict:
@@ -100,10 +105,12 @@ def main() -> int:
     day = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timedelta(days=1)
     if len(sys.argv) > 1 and sys.argv[1]:
         day = pd.Timestamp(sys.argv[1])
-    check_addresses(day)
+    found = check_addresses(day)
+    minute = found[0] if found else 1
+    per_hour = max(1, len([m for m in found if m < 30]) * 2)   # rough files-per-hour from the 30-min scan
 
-    stamps = [(day + pd.Timedelta(hours=h, minutes=5)).strftime("%Y%m%d%H%M%S") for h in range(24)]
-    print(f"\nStep 2: sampling one minute per hour from {day.date()} (v3 files)")
+    stamps = [(day + pd.Timedelta(hours=h, minutes=minute)).strftime("%Y%m%d%H%M%S") for h in range(24)]
+    print(f"\nStep 2: sampling minute :{minute:02d} of each hour on {day.date()} (v3 files)")
     with ThreadPoolExecutor(WORKERS) as ex:
         res = list(ex.map(process_v3, stamps))
     print("  HTTP results:", dict(Counter(str(r["status"]) for r in res)))
@@ -125,9 +132,11 @@ def main() -> int:
     print(f"  Files read: {len(got)}  |  {mb:,.1f} MB compressed  |  {recs:,} records  |  {docs:,} articles")
     print(f"  Avg per file: {mb/len(got):,.1f} MB, {per_file_s:,.1f} s")
     print(f"  Matches: Ukraine+Russia {ctx:,} | peace {peace:,} | war {war:,}")
-    print(f"  Estimated full day (1,440 files): ~{mb/len(got)*1440/1000:,.1f} GB, "
-          f"~{per_file_s*1440/WORKERS/60:,.0f} min with {WORKERS} parallel downloads, "
-          f"~{docs/len(got)*1440:,.0f} articles, ~{ctx/len(got)*1440:,.0f} Ukraine+Russia articles")
+    n = per_hour * 24
+    print(f"  Files per day (from the minute scan): ~{n}")
+    print(f"  Estimated full day: ~{mb/len(got)*n/1000:,.1f} GB, "
+          f"~{per_file_s*n/WORKERS/60:,.0f} min with {WORKERS} parallel downloads, "
+          f"~{docs/len(got)*n:,.0f} articles, ~{ctx/len(got)*n:,.0f} Ukraine+Russia articles")
     print("  Languages:", ", ".join(f"{k}:{v}" for k, v in langs.most_common(12)))
     print(f"  Total run time: {time.time()-T0:,.0f} s")
     return 0
